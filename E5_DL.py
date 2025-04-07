@@ -31,6 +31,15 @@ for i in range(1,32):
     else:
         day_list.append('0'+str(i))
 
+dataset = "reanalysis-era5-land"
+request = {
+    "variable": ["geopotential"],
+    "data_format": "netcdf",
+    "download_format": "unarchived"
+}
+
+c.retrieve(dataset, request,'ERA_Geopotential.nc')
+
 for year in year_list:
     count=0
     leap_flag=np.mod(int(year),4)==0

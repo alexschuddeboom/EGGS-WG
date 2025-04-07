@@ -4,6 +4,9 @@ import sys
 import os
 import DependencyCheck as DC
 import shutil
+os.environ["MKL_NUM_THREADS"] = "1" 
+os.environ["NUMEXPR_NUM_THREADS"] = "1" 
+os.environ["OMP_NUM_THREADS"] = "1" 
 
 ARGS = len(sys.argv) - 1
 if ARGS == 0:

@@ -1157,12 +1157,41 @@ def orography_prep(L_Directory,S_Directory,LatBounds,LonBounds):
     R=6370000
     g=9.80665
     #Restrict geopotential to the appropriate
-    lat_1=lat>=np.min(t2m['latitude'].values)
-    lat_2=lat<=np.max(t2m['latitude'].values)
+    t2m_lat=t2m['latitude'].values
+    t2m_lon=t2m['longitude'].values
+    
+    lat_1=np.greater_equal(lat,np.min(t2m_lat))
+    lat_2=np.less_equal(lat,np.max(t2m_lat))
     lats=np.logical_and(lat_1,lat_2)
-    lon_1=lon>=np.min(t2m['longitude'].values)
-    lon_2=lon<=np.max(t2m['longitude'].values)
+    lon_1=np.greater_equal(lon,np.min(t2m_lon))
+    lon_2=np.less_equal(lon,np.max(t2m_lon))
     lons=np.logical_and(lon_1,lon_2)
+    
+    if len(t2m['latitude'].values)!=np.sum(lats):
+        tlat_0=t2m_lat[0]-lat[np.where(lats)[0][0]]
+        tlat_1=t2m_lat[-1]-lat[np.where(lats)[0][-1]]
+        if np.abs(tlat_0)>np.abs(tlat_1):
+            ind=np.where(lats)[0][-1]+1
+            aind=np.where(lats)[0][0]-1
+        else:
+            ind=np.where(lats)[0][0]-1 
+            aind=np.where(lats)[0][-1]+1         
+        if len(t2m['longitude'].values)-int(np.sum(lons))==2:
+                    lons[aind]=True      
+        lats[ind]=True
+
+    if len(t2m['longitude'].values)!=int(np.sum(lons)):
+        tlon_0=t2m_lon[0]-lon[np.where(lons)[0][0]]
+        tlon_1=t2m_lon[-1]-lon[np.where(lons)[0][-1]]
+        if np.abs(tlon_0)>np.abs(tlon_1):
+            ind=np.where(lons)[0][-1]+1
+            aind=np.where(lons)[0][0]-1
+        else:
+            ind=np.where(lons)[0][0]-1
+            aind=np.where(lons)[0][-1]+1
+        if len(t2m['longitude'].values)-int(np.sum(lons))==2:
+            lons[aind]=True
+        lons[ind]=True
     geopotential_grid=geopotential[lats,:]
     geopotential_grid=geopotential_grid[:,lons]
     #Calculate the altitude
