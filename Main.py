@@ -4,29 +4,31 @@ import sys
 import os
 import DependencyCheck as DC
 import shutil
+import multiprocessing
 os.environ["MKL_NUM_THREADS"] = "1" 
 os.environ["NUMEXPR_NUM_THREADS"] = "1" 
 os.environ["OMP_NUM_THREADS"] = "1" 
 
-ARGS = len(sys.argv) - 1
-if ARGS == 0:
-    print('No argument given for YAML file. Trying on disk version.')
-    YAML_DIR = os.getcwd()+'/'
-    YAML_FILE = 'Parameters.yaml'
-    YAML_STR = YAML_DIR+YAML_FILE
-    print(YAML_STR)
-else:
-    YAML_STR = sys.argv[1]
-DEPENDENCY_FLAG = DC.DependencyCheck_Func()
 
-if not DEPENDENCY_FLAG:
-    sys.exit('Please install dependencies and re-run the program')
-else:
-    # Import the yaml data
-    import yaml
-    stream = open(YAML_STR, 'r', encoding='utf-8')
-    Params = yaml.safe_load(stream)
-    Params['Variables'] = ['tp', 't2m', 'd2m']
+if __name__ == '__main__': 
+    ARGS = len(sys.argv) - 1
+    if ARGS == 0:
+        print('No argument given for YAML file. Trying on disk version.')
+        YAML_DIR = os.getcwd()+'/'
+        YAML_FILE = 'Parameters.yaml'
+        YAML_STR = YAML_DIR+YAML_FILE
+        print(YAML_STR)
+    else:
+        YAML_STR = sys.argv[1]
+    DEPENDENCY_FLAG = DC.DependencyCheck_Func()
+    if not DEPENDENCY_FLAG:
+        sys.exit('Please install dependencies and re-run the program')
+    else:
+        # Import the yaml data
+        import yaml
+        stream = open(YAML_STR, 'r', encoding='utf-8')
+        Params = yaml.safe_load(stream)
+        Params['Variables'] = ['tp', 't2m', 'd2m']
     # Check for lat/lon ordering
     lat = Params['Lat Bounds']
     lon = Params['Lon Bounds']
@@ -72,7 +74,7 @@ else:
             if not(os.path.isfile(filename)) or Params['Regenerate Data']:
                 print('Detrending the  '+var_name+' variable')
                 SWG_B.Variable_Detrender(var_name, Var_dir)
-
+    
     ###########################################################################
     # First Build the Precipitation model components
     # Change tp from hourly to daily
@@ -110,7 +112,7 @@ else:
     if not(os.path.isfile(filename)) or Params['Regenerate Data']:
         print('Calculating Amounts Omega Matrix')
         SWG_B.A_Omega(Var_dir)
-
+    
     ###########################################################################
     # Var list calculate
     for var_name in var_list:
@@ -120,7 +122,7 @@ else:
             if not(os.path.isfile(filename)) or Params['Regenerate Data']:
                 print('Building '+var_name+' simulation parameters')
                 SWG_B.Fourier_Generation(Var_dir, var_name)
-
+    
     # X and Y matrix calculate
     test_list = ['t2m', 'd2m']
     hourly_list = []

@@ -483,13 +483,11 @@ def Amounts_Corr(Directory):
     ds.to_netcdf(Corr_Savename)
     return
 
-def O_Omega(Directory):
-    '''Calculates the correlations required in occurence simulation'''
+def Omega_Mon(P0,P1,C_X_Obs,C_R_0,imonth):
+    '''Parallised Omega matrix month calculation'''
     import numpy as np
-    import xarray as xr
-    import scipy.stats as scistat
-    import os
     import time
+    print('Calculating month:'+str(imonth))
     def Simulate_Day(V_1,prob_vector,Omega):
         #Simulates the next day of precipitation values given:
             #V_1 Current day values
@@ -529,14 +527,63 @@ def O_Omega(Directory):
                 else:
                     Sim_Matrix_Corr[i,j]=Sim_Matrix_Corr[j,i]
         return Sim_Matrix_Corr
-
-    #Recreate the Brissette approach for building the omega matrix
-    Year_start=1950
-    Year_end=2022
+    #Iterative solving process    
     Sim_len=6000
     Sim_Iterations=15
     learning_rate=[0.4,0.2,0.3,0.05]
+    station_len=len(P0)
+    
+    Simulated_data=Simulation_Running_Function(C_R_0,Sim_len,station_len,P0,P1)
+    C_X_Sim_i=Correlate_Calculate(Simulated_data)
+    try:
+        np.linalg.cholesky(C_R_0)
+    except:
+        C_R_0=Pos_Def(C_R_0)
+    old_diff=1
+    flag=True
+    learningcount=0
+    while flag:
+        learningflag=True
+        while learningflag:
+            C_R_U=C_R_0+learning_rate[learningcount]*(C_X_Obs-C_X_Sim_i)
+            C_R=Pos_Def(C_R_U)
+            t = time.time()
+            Diff_list=[]
+            for q in range(0,Sim_Iterations):
+                Simulated_data=Simulation_Running_Function(C_R,Sim_len,station_len,P0,P1)
+                C_X_Sim=Correlate_Calculate(Simulated_data)
+                diff=np.abs(C_X_Obs-C_X_Sim)
+                Diff_list.append(diff.mean())
+            Diff_mean=np.mean(Diff_list)
+            print('Month #'+str(imonth)+' --- '+
+                  str(np.round(Diff_mean,3))+' : Cycle of time '+
+                  str(np.round(time.time() - t,4)) +' seconds and count = '+
+                  str(learningcount)+' Out of '+str(len(learning_rate)))
+            if np.abs(Diff_mean)>np.abs(old_diff):
+                learningcount+=1
+                if learningcount==len(learning_rate):
+                    learningflag=False
+                    flag=False
+            else:
+                C_R_0=C_R
+                learningflag=False
+                if Diff_mean<0.005:
+                    flag=False
+                old_diff=Diff_mean
+    return C_R_0
 
+def O_Omega(Directory):
+    '''Calculates the correlations required in occurence simulation'''
+    import numpy as np
+    import xarray as xr
+    import scipy.stats as scistat
+    import os
+    import time
+    import multiprocessing 
+  
+    #Recreate the Brissette approach for building the omega matrix
+    Year_start=1950
+    Year_end=2022
     Corr_Obs_name=Directory+'Corr_'+str(Year_start)+'_'+str(Year_end)+'.nc'
     CORR=xr.open_dataset(Corr_Obs_name)
     Station_mask=CORR['Station_Mask'].values
@@ -545,51 +592,28 @@ def O_Omega(Directory):
 
     station_len=len(CORR['Station'])
     Full_C_R=np.zeros(np.shape(CORR['correlation_matrix'].values))
-
+    
+    p=[]
+    for imonth in range(0,12):
+        P0_v=scistat.norm.ppf(CORR['P0_vector'].values[:,imonth],0,1)
+        P1_v=scistat.norm.ppf(CORR['P1_vector'].values[:,imonth],0,1)
+        C_X_Obs_v=CORR['correlation_matrix'].values[:,:,imonth]
+        C_R_0_v=CORR['correlation_matrix'].values[:,:,imonth]
+        p.append((P0_v,P1_v,C_X_Obs_v,C_R_0_v,imonth))
+    ##### Multithreading Code
+    if multiprocessing.cpu_count()>=12:
+        with multiprocessing.Pool(processes=12) as pool:
+            r = pool.starmap(Omega_Mon,p)  # Parallel execution
+    elif multiprocessing.cpu_count()>=4:
+        with multiprocessing.Pool(processes=4) as pool:
+            r = pool.starmap(Omega_Mon,p)  # Parallel execution
+    else:
+        with multiprocessing.Pool(processes=1) as pool:
+            r = pool.starmap(Omega_Mon,p)  # Parallel execution
+    
     for i in range(0,12):
-        print(str(i))
-        P0=scistat.norm.ppf(CORR['P0_vector'].values[:,i],0,1)
-        P1=scistat.norm.ppf(CORR['P1_vector'].values[:,i],0,1)
-        C_X_Obs=CORR['correlation_matrix'].values[:,:,i]
-        C_R_0=CORR['correlation_matrix'].values[:,:,i]
-        Simulated_data=Simulation_Running_Function(C_R_0,Sim_len,station_len,P0,P1)
-        C_X_Sim_i=Correlate_Calculate(Simulated_data)
-        try:
-            np.linalg.cholesky(C_R_0)
-        except:
-            C_R_0=Pos_Def(C_R_0)
-        old_diff=1
-        flag=True
-        learningcount=0
-        while flag:
-            learningflag=True
-            while learningflag:
-                C_R_U=C_R_0+learning_rate[learningcount]*(C_X_Obs-C_X_Sim_i)
-                C_R=Pos_Def(C_R_U)
-                t = time.time()
-                Diff_list=[]
-                for q in range(0,Sim_Iterations):
-                    Simulated_data=Simulation_Running_Function(C_R,Sim_len,station_len,P0,P1)
-                    C_X_Sim=Correlate_Calculate(Simulated_data)
-                    diff=np.abs(C_X_Obs-C_X_Sim)
-                    Diff_list.append(diff.mean())
-                Diff_mean=np.mean(Diff_list)
-                print(str(np.round(Diff_mean,3))+' : Cycle of time '+
-                      str(np.round(time.time() - t,4)) +' seconds and count = '+
-                      str(learningcount)+' Out of '+str(len(learning_rate)))
-                if np.abs(Diff_mean)>np.abs(old_diff):
-                    learningcount+=1
-                    if learningcount==len(learning_rate):
-                        learningflag=False
-                        flag=False
-                else:
-                    C_R_0=C_R
-                    learningflag=False
-                    if Diff_mean<0.005:
-                        flag=False
-                    old_diff=Diff_mean
-        Full_C_R[:,:,i]=C_R_0
-
+        Full_C_R[:,:,i]=r[i]
+          
     ds = xr.Dataset(
         data_vars=dict(Brissette_Omega=(["Station","Stations_2","Months"], Full_C_R)),
         coords=dict(Station=list(range(0,station_len)),
@@ -606,14 +630,11 @@ def O_Omega(Directory):
     ds.to_netcdf(Omega_Savename)
     return
 
-def A_Omega(Directory):
-    '''Calculates the correlations required in amount simulation'''
+def A_Omega_Mon(P0,P1,C_X_Obs,C_R_0,Tmp_B_Omega,Full_Coeff,imonth):
+    '''Parallised Omega matrix month calculation'''
     import numpy as np
-    import xarray as xr
-    import scipy.stats as scistat
-    from scipy.special import erf
-    import os
     import time
+    from scipy.special import erf
     def Simulate_Day_Occur(V_1,prob_vector,Omega):
         #Simulates the next day of precipitation values given:
             #V_1 Current day values
@@ -685,12 +706,70 @@ def A_Omega(Directory):
                 else:
                     Sim_Matrix_Corr[i,j]=Sim_Matrix_Corr[j,i]
         return Sim_Matrix_Corr
-    #recreate the Brissette approach for building the omega matrix
-    Year_start=1950
-    Year_end=2022
+    print('Calculating month:'+str(imonth))
     Sim_len=12000
     Sim_Iterations=15
     learning_rate=[0.4,0.25,0.1]
+    station_len=len(P0)
+    
+    try:
+        np.linalg.cholesky(C_R_0)
+    except:
+        C_R_0=Pos_Def(C_R_0)
+    [Simulated_Occurrence,Simulated_Amounts]=Simulation_Running_Function(C_R_0,
+                            Sim_len,station_len,P0,P1,Tmp_B_Omega,Full_Coeff)
+    C_X_Sim_i=Correlate_Calculate(Simulated_Occurrence,Simulated_Amounts)
+    #Build iterative point from here
+    old_diff=1
+    flag=True
+    learningcount=0
+    while flag:
+        learningflag=True
+        while learningflag:
+            C_R_U=C_R_0+learning_rate[learningcount]*(C_X_Obs-C_X_Sim_i)
+            C_R=Pos_Def(C_R_U)
+            t = time.time()
+            Diff_list=[]
+            for q in range(0,Sim_Iterations):
+                [Simulated_Occurrence,Simulated_Amounts]=Simulation_Running_Function(C_R,
+                                        Sim_len,station_len,P0,P1,Tmp_B_Omega,Full_Coeff)
+                C_X_Sim=Correlate_Calculate(Simulated_Occurrence,Simulated_Amounts)
+                diff=np.abs(C_X_Obs-C_X_Sim)
+                Diff_list.append(diff.mean())
+            Diff_mean=np.mean(Diff_list)
+            print('Month #'+str(imonth)+' --- '+
+                  str(np.round(Diff_mean,3))+' : Cycle of time '+
+                  str(np.round(time.time() - t,4))
+                  +' seconds and count = '+str(learningcount)+
+                  ' Out of '+str(len(learning_rate)))
+            if np.abs(Diff_mean)>np.abs(old_diff):
+                learningcount+=1
+                if learningcount==len(learning_rate):
+                    learningflag=False
+                    flag=False
+            else:
+                C_R_0=C_R
+                learningflag=False
+                if Diff_mean<0.005:
+                    flag=False
+                old_diff=Diff_mean
+    return C_R_0
+ 
+
+def A_Omega(Directory):
+    '''Calculates the correlations required in amount simulation'''
+    import numpy as np
+    import xarray as xr
+    import scipy.stats as scistat
+    from scipy.special import erf
+    import os
+    import time
+    import multiprocessing
+    #recreate the Brissette approach for building the omega matrix
+    Year_start=1950
+    Year_end=2022
+
+    
     Corr_Obs_name=Directory+'Amounts_Corr_'+str(Year_start)+'_'+str(Year_end)+'.nc'
     CORR=xr.open_dataset(Corr_Obs_name)
     B_filename=Directory+'O_Omega_'+str(Year_start)+'_'+str(Year_end)+'.nc'
@@ -700,58 +779,32 @@ def A_Omega(Directory):
     Alpha_1=CORR['Alpha_Vector'].values
     Beta_1=CORR['Beta_1_Vector'].values
     Beta_2=CORR['Beta_2_Vector'].values
-    Full_Coeff=[Alpha_1,Beta_1,Beta_2]
     station_len=len(CORR['Station'])
     Full_C_R=np.zeros(np.shape(CORR['correlation_matrix'].values))
-    for imon in range(0,12):
-        Full_Coeff=[Alpha_1[:,imon],Beta_1[:,imon],Beta_2[:,imon]]
-        print(str(imon))
-        P0=scistat.norm.ppf(B_Omega_dataset['P0_vector'].values[:,imon],0,1)
-        P1=scistat.norm.ppf(B_Omega_dataset['P1_vector'].values[:,imon],0,1)
-        Tmp_B_Omega=B_Omega[:,:,imon]
-        C_X_Obs=CORR['correlation_matrix'].values[:,:,imon]
-        C_R_0=CORR['correlation_matrix'].values[:,:,imon]
-        try:
-            np.linalg.cholesky(C_R_0)
-        except:
-            C_R_0=Pos_Def(C_R_0)
-        [Simulated_Occurrence,Simulated_Amounts]=Simulation_Running_Function(C_R_0,
-                                Sim_len,station_len,P0,P1,Tmp_B_Omega,Full_Coeff)
-        C_X_Sim_i=Correlate_Calculate(Simulated_Occurrence,Simulated_Amounts)
-        #Build iterative point from here
-        old_diff=1
-        flag=True
-        learningcount=0
-        while flag:
-            learningflag=True
-            while learningflag:
-                C_R_U=C_R_0+learning_rate[learningcount]*(C_X_Obs-C_X_Sim_i)
-                C_R=Pos_Def(C_R_U)
-                t = time.time()
-                Diff_list=[]
-                for q in range(0,Sim_Iterations):
-                    [Simulated_Occurrence,Simulated_Amounts]=Simulation_Running_Function(C_R,
-                                            Sim_len,station_len,P0,P1,Tmp_B_Omega,Full_Coeff)
-                    C_X_Sim=Correlate_Calculate(Simulated_Occurrence,Simulated_Amounts)
-                    diff=np.abs(C_X_Obs-C_X_Sim)
-                    Diff_list.append(diff.mean())
-                Diff_mean=np.mean(Diff_list)
-                print(str(np.round(Diff_mean,3))+' : Cycle of time '+
-                      str(np.round(time.time() - t,4))
-                      +' seconds and count = '+str(learningcount)+
-                      ' Out of '+str(len(learning_rate)))
-                if np.abs(Diff_mean)>np.abs(old_diff):
-                    learningcount+=1
-                    if learningcount==len(learning_rate):
-                        learningflag=False
-                        flag=False
-                else:
-                    C_R_0=C_R
-                    learningflag=False
-                    if Diff_mean<0.005:
-                        flag=False
-                    old_diff=Diff_mean
-        Full_C_R[:,:,imon]=C_R_0
+
+    p=[]
+    for imonth in range(0,12):
+        P0_v=scistat.norm.ppf(B_Omega_dataset['P0_vector'].values[:,imonth],0,1)
+        P1_v=scistat.norm.ppf(B_Omega_dataset['P1_vector'].values[:,imonth],0,1)
+        C_X_Obs_v=CORR['correlation_matrix'].values[:,:,imonth]
+        C_R_0_v=CORR['correlation_matrix'].values[:,:,imonth]
+        B_Omega_v=B_Omega[:,:,imonth]
+        Full_Coeff_v=[Alpha_1[:,imonth],Beta_1[:,imonth],Beta_2[:,imonth]]
+        p.append((P0_v,P1_v,C_X_Obs_v,C_R_0_v,B_Omega_v,Full_Coeff_v,imonth))
+    ##### Multithreading Code
+    if multiprocessing.cpu_count()>=12:
+        with multiprocessing.Pool(processes=12) as pool:
+            r = pool.starmap(A_Omega_Mon,p)  # Parallel execution
+    elif multiprocessing.cpu_count()>=4:
+        with multiprocessing.Pool(processes=4) as pool:
+            r = pool.starmap(A_Omega_Mon,p)  # Parallel execution
+    else:
+        with multiprocessing.Pool(processes=1) as pool:
+            r = pool.starmap(A_Omega_Mon,p)  # Parallel execution
+    
+    for i in range(0,12):
+        Full_C_R[:,:,i]=r[i]
+        
     ds = xr.Dataset(
         data_vars=dict(Brissette_Amounts_Omega=(["Station","Stations_2","Months"], Full_C_R)),
         coords=dict(Station=list(range(0,station_len)),
@@ -773,15 +826,9 @@ def A_Omega(Directory):
     ds.to_netcdf(Omega_Savename)
     return
 
-
-def Fourier_Generation(Directory,Var):
-    '''Handles the generation of the temperature model components'''
-    import xarray as xr
+def Fourier_Hour_Parallel(in_var_data,in_var_std,in_full_day_vector,station_num,Station_max):
     import numpy as np
-    import os
-    start_year='1950'
-    end_year='2022'
-    variabile_name=Var
+    '''Parallelised form of the hourly fourier calculation'''
     def Alpha_Beta_calculation_Mean_day(T_vector,n_value,Time_vec):
         coeff=2/8760
         theta=2*np.pi*n_value/8760
@@ -814,6 +861,47 @@ def Fourier_Generation(Directory,Var):
         Alpha_value=Alpha_value*coeff
         Beta_value=Beta_value*coeff
         return Alpha_value,Beta_value
+    Step_len=len(in_var_data[0,:])
+    
+    n_values=[1,365,730,1095,1460,2190]
+    Fourier_mean_v=np.zeros([Step_len*365])
+    Fourier_std_v=np.zeros([Step_len*365])
+    print('Calculating Fourier Hours:'+str(station_num)+'/'+str(Station_max))
+    
+    tmp_data=in_var_data[:,:]
+    mean_T=np.nanmean(tmp_data)
+    std_T=np.mean(in_var_std[:,:])
+    Alpha_mean_values=[]
+    Beta_mean_values=[]
+    Alpha_std_values=[]
+    Beta_std_values=[]
+    for n in n_values:
+        [Alpha,Beta]=Alpha_Beta_calculation_Mean_day(tmp_data,n,in_full_day_vector)
+        Alpha_mean_values.append(Alpha)
+        Beta_mean_values.append(Beta)
+        [Alpha_std,Beta_std]=Alpha_Beta_calculation_STD_day(tmp_data,n,in_full_day_vector)
+        Alpha_std_values.append(Alpha_std)
+        Beta_std_values.append(Beta_std)
+    for j in range(0,Step_len*365):
+        val=0
+        std_val=0
+        count=0
+        for n in n_values:
+            t=j+1
+            val+=Alpha_mean_values[count]*np.cos(
+                2*np.pi*n*t/8760)+Beta_mean_values[count]*np.sin(2*np.pi*n*t/8760)
+            std_val+=Alpha_std_values[count]*np.cos(
+                2*np.pi*n*t/8760)+Beta_std_values[count]*np.sin(2*np.pi*n*t/8760)
+            count+=1
+        Fourier_mean_v[j]=mean_T + val
+        Fourier_std_v[j]=std_T + std_val
+    return station_num,Fourier_mean_v,Fourier_std_v
+
+
+def Fourier_Day_Parallel(in_var_data,in_var_P,in_D_std,in_W_std,in_full_day_vector,station_num,Station_max):
+    import numpy as np
+    '''Parallelised form of the daily fourier calculation'''
+    n_values=[1,2,3,4,6]
     def Alpha_Beta_calculation_Mean(T_vector,n_value,Time_vec):
         coeff=2/365
         theta=2*np.pi*n_value/365
@@ -842,42 +930,105 @@ def Fourier_Generation(Directory,Var):
         Alpha_value=Alpha_value*coeff
         Beta_value=Beta_value*coeff
         return Alpha_value,Beta_value
+    Fourier_mean_dry_v=np.zeros([365])
+    Fourier_std_dry_v=np.zeros([365])
+    Fourier_mean_wet_v=np.zeros([365])
+    Fourier_std_wet_v=np.zeros([365])
+    print('Calculating Fourier Days:'+str(station_num)+'/'+str(Station_max))
+    tmp_T=in_var_data[:,:]
+    tmp_P=in_var_P[:]
+    tmp_T_W=tmp_T[np.logical_and(tmp_P,tmp_P),:]
+    tmp_T_D=tmp_T[np.logical_not(tmp_P),:]
+    mean_T_W=np.nanmean(tmp_T_W)
+    std_T_W=np.nanmean(in_W_std[:,:])
+    mean_T_D=np.nanmean(tmp_T_D)
+    std_T_D=np.nanmean(in_D_std[:,:])
+    Wet_day_vector=in_full_day_vector[np.logical_and(tmp_P,tmp_P)]
+    Dry_day_vector=in_full_day_vector[np.logical_not(tmp_P)]
+    Alpha_mean_values_W=[]
+    Beta_mean_values_W=[]
+    Alpha_std_values_W=[]
+    Beta_std_values_W=[]
+    Alpha_mean_values_D=[]
+    Beta_mean_values_D=[]
+    Alpha_std_values_D=[]
+    Beta_std_values_D=[]
+    for n in n_values:
+        #Dry Days
+        [Alpha,Beta]=Alpha_Beta_calculation_Mean(tmp_T_D,n,Dry_day_vector)
+        Alpha_mean_values_D.append(Alpha)
+        Beta_mean_values_D.append(Beta)
+        [Alpha_std,Beta_std]=Alpha_Beta_calculation_STD(tmp_T_D,n,Dry_day_vector)
+        Alpha_std_values_D.append(Alpha_std)
+        Beta_std_values_D.append(Beta_std)
+        #Wet Days
+        [Alpha,Beta]=Alpha_Beta_calculation_Mean(tmp_T_W,n,Wet_day_vector)
+        Alpha_mean_values_W.append(Alpha)
+        Beta_mean_values_W.append(Beta)
+        [Alpha_std,Beta_std]=Alpha_Beta_calculation_STD(tmp_T_W,n,Wet_day_vector)
+        Alpha_std_values_W.append(Alpha_std)
+        Beta_std_values_W.append(Beta_std)
+    for j in range(0,365):
+        val_D=0
+        std_val_D=0
+        val_W=0
+        std_val_W=0
+        count=0
+        for n in n_values:
+            t=j+1
+            val_D+=Alpha_mean_values_D[count]*np.cos(
+                2*np.pi*n*t/365)+Beta_mean_values_D[count]*np.sin(2*np.pi*n*t/365)
+            std_val_D+=Alpha_std_values_D[count]*np.cos(
+                2*np.pi*n*t/365)+Beta_std_values_D[count]*np.sin(2*np.pi*n*t/365)
+            val_W+=Alpha_mean_values_W[count]*np.cos(
+                2*np.pi*n*t/365)+Beta_mean_values_W[count]*np.sin(2*np.pi*n*t/365)
+            std_val_W+=Alpha_std_values_W[count]*np.cos(
+                2*np.pi*n*t/365)+Beta_std_values_W[count]*np.sin(2*np.pi*n*t/365)
+            count+=1
+        Fourier_mean_wet_v[j]=mean_T_W + val_W
+        Fourier_std_wet_v[j]=std_T_W + std_val_W
+        Fourier_mean_dry_v[j]=mean_T_D + val_D
+        Fourier_std_dry_v[j]=std_T_D + std_val_D
+    return station_num,Fourier_mean_wet_v,Fourier_std_wet_v,Fourier_mean_dry_v,Fourier_std_dry_v
+    
+    
+def Fourier_Generation(Directory,Var):
+    '''Handles the generation of the temperature model components'''
+    import xarray as xr
+    import numpy as np
+    import os
+    import multiprocessing
+    start_year='1950'
+    end_year='2022'
+    variabile_name=Var
     def Fourier_Hour_Solve(var_data,var_std,full_day_vector):
         Step_len=len(var_data[0,:,0])
         Station_max=len(var_data[0,0,:])
         n_values=[1,365,730,1095,1460,2190]
         Fourier_mean=np.zeros([Step_len*365,Station_max])
         Fourier_std=np.zeros([Step_len*365,Station_max])
-        for i in range(0,Station_max):
-            print('Calculating Fourier Hours:'+str(i)+'/'+str(Station_max))
-            tmp_data=var_data[:,:,i]
-            mean_T=np.nanmean(tmp_data)
-            std_T=np.mean(var_std[:,:,i])
-            Alpha_mean_values=[]
-            Beta_mean_values=[]
-            Alpha_std_values=[]
-            Beta_std_values=[]
-            for n in n_values:
-                [Alpha,Beta]=Alpha_Beta_calculation_Mean_day(tmp_data,n,full_day_vector)
-                Alpha_mean_values.append(Alpha)
-                Beta_mean_values.append(Beta)
-                [Alpha_std,Beta_std]=Alpha_Beta_calculation_STD_day(tmp_data,n,full_day_vector)
-                Alpha_std_values.append(Alpha_std)
-                Beta_std_values.append(Beta_std)
-            for j in range(0,Step_len*365):
-                val=0
-                std_val=0
-                count=0
-                for n in n_values:
-                    t=j+1
-                    val+=Alpha_mean_values[count]*np.cos(
-                        2*np.pi*n*t/8760)+Beta_mean_values[count]*np.sin(2*np.pi*n*t/8760)
-                    std_val+=Alpha_std_values[count]*np.cos(
-                        2*np.pi*n*t/8760)+Beta_std_values[count]*np.sin(2*np.pi*n*t/8760)
-                    count+=1
-                Fourier_mean[j,i]=mean_T + val
-                Fourier_std[j,i]=std_T + std_val
+        ##### Multithreading Code
+        p=[]
+        for istation in range(0,Station_max):
+            var_data_v=var_data[:,:,istation]
+            var_std_v=var_std[:,:,istation]
+            p.append((var_data_v,var_std_v,full_day_vector,istation,Station_max))
+        if multiprocessing.cpu_count()>=12:
+            with multiprocessing.Pool(processes=12) as pool:
+                r = pool.starmap(Fourier_Hour_Parallel,p)  # Parallel execution
+        elif multiprocessing.cpu_count()>=4:
+            with multiprocessing.Pool(processes=4) as pool:
+                r = pool.starmap(Fourier_Hour_Parallel,p)  # Parallel execution
+        else:
+            with multiprocessing.Pool(processes=1) as pool:
+                r = pool.starmap(Fourier_Hour_Parallel,p)  # Parallel execution
+        #####
+        for iv in range(0,len(r)):
+            index=r[iv][0]
+            Fourier_mean[:,index]=r[iv][1]
+            Fourier_std[:,index]=r[iv][2]
         return Fourier_mean,Fourier_std
+
     def Fourier_Day_Solve(var_data,var_P_data,var_D_std,var_W_std,full_day_vector):
         Station_max=len(var_data[0,0,:])
         Fourier_mean_dry=np.zeros([365,Station_max])
@@ -885,63 +1036,32 @@ def Fourier_Generation(Directory,Var):
         Fourier_mean_wet=np.zeros([365,Station_max])
         Fourier_std_wet=np.zeros([365,Station_max])
         n_values=[1,2,3,4,6]
-        for i in range(0,Station_max):
-            print('Calculating Fourier Days:'+str(i)+'/'+str(Station_max))
-            tmp_T=var_data[:,:,i]
-            tmp_P=var_P_data[:,i]
-            tmp_T_W=tmp_T[np.logical_and(tmp_P,tmp_P),:]
-            tmp_T_D=tmp_T[np.logical_not(tmp_P),:]
-            mean_T_W=np.nanmean(tmp_T_W)
-            std_T_W=np.nanmean(var_W_std[:,:,i])
-            mean_T_D=np.nanmean(tmp_T_D)
-            std_T_D=np.nanmean(var_D_std[:,:,i])
-            Wet_day_vector=full_day_vector[np.logical_and(tmp_P,tmp_P)]
-            Dry_day_vector=full_day_vector[np.logical_not(tmp_P)]
-            Alpha_mean_values_W=[]
-            Beta_mean_values_W=[]
-            Alpha_std_values_W=[]
-            Beta_std_values_W=[]
-            Alpha_mean_values_D=[]
-            Beta_mean_values_D=[]
-            Alpha_std_values_D=[]
-            Beta_std_values_D=[]
-            for n in n_values:
-                #Dry Days
-                [Alpha,Beta]=Alpha_Beta_calculation_Mean(tmp_T_D,n,Dry_day_vector)
-                Alpha_mean_values_D.append(Alpha)
-                Beta_mean_values_D.append(Beta)
-                [Alpha_std,Beta_std]=Alpha_Beta_calculation_STD(tmp_T_D,n,Dry_day_vector)
-                Alpha_std_values_D.append(Alpha_std)
-                Beta_std_values_D.append(Beta_std)
-                #Wet Days
-                [Alpha,Beta]=Alpha_Beta_calculation_Mean(tmp_T_W,n,Wet_day_vector)
-                Alpha_mean_values_W.append(Alpha)
-                Beta_mean_values_W.append(Beta)
-                [Alpha_std,Beta_std]=Alpha_Beta_calculation_STD(tmp_T_W,n,Wet_day_vector)
-                Alpha_std_values_W.append(Alpha_std)
-                Beta_std_values_W.append(Beta_std)
-            for j in range(0,365):
-                val_D=0
-                std_val_D=0
-                val_W=0
-                std_val_W=0
-                count=0
-                for n in n_values:
-                    t=j+1
-                    val_D+=Alpha_mean_values_D[count]*np.cos(
-                        2*np.pi*n*t/365)+Beta_mean_values_D[count]*np.sin(2*np.pi*n*t/365)
-                    std_val_D+=Alpha_std_values_D[count]*np.cos(
-                        2*np.pi*n*t/365)+Beta_std_values_D[count]*np.sin(2*np.pi*n*t/365)
-                    val_W+=Alpha_mean_values_W[count]*np.cos(
-                        2*np.pi*n*t/365)+Beta_mean_values_W[count]*np.sin(2*np.pi*n*t/365)
-                    std_val_W+=Alpha_std_values_W[count]*np.cos(
-                        2*np.pi*n*t/365)+Beta_std_values_W[count]*np.sin(2*np.pi*n*t/365)
-                    count+=1
-                Fourier_mean_wet[j,i]=mean_T_W + val_W
-                Fourier_std_wet[j,i]=std_T_W + std_val_W
-                Fourier_mean_dry[j,i]=mean_T_D + val_D
-                Fourier_std_dry[j,i]=std_T_D + std_val_D
+        ##### Multithreading Code
+        p=[]
+        for istation in range(0,Station_max):
+            var_data_v=var_data[:,:,istation]
+            var_P_data_v=var_P_data[:,istation]
+            var_D_std_v=var_D_std[:,:,istation]
+            var_W_std_v=var_W_std[:,:,istation]
+            p.append((var_data_v,var_P_data_v,var_D_std_v,var_W_std_v,full_day_vector,istation,Station_max))
+        if multiprocessing.cpu_count()>=12:
+            with multiprocessing.Pool(processes=12) as pool:
+                r = pool.starmap(Fourier_Day_Parallel,p)  # Parallel execution
+        elif multiprocessing.cpu_count()>=4:
+            with multiprocessing.Pool(processes=4) as pool:
+                r = pool.starmap(Fourier_Day_Parallel,p)  # Parallel execution
+        else:
+            with multiprocessing.Pool(processes=1) as pool:
+                r = pool.starmap(Fourier_Day_Parallel,p)  # Parallel execution
+        #####
+        for iv in range(0,len(r)):
+            index=r[iv][0]
+            Fourier_mean_wet[:,index]=r[iv][1]
+            Fourier_std_wet[:,index]=r[iv][2]
+            Fourier_mean_dry[:,index]=r[iv][3]
+            Fourier_std_dry[:,index]=r[iv][4]
         return Fourier_mean_wet,Fourier_std_wet,Fourier_mean_dry,Fourier_std_dry
+    
     year_str=start_year+'_'+end_year
     ERA5_name=Directory+'Detrended_'+variabile_name+'_' + year_str+'.nc'
     ERA5_P_name=Directory+'daily_tp_' + year_str+'.nc'
@@ -999,6 +1119,7 @@ def Fourier_Generation(Directory,Var):
             tmp_T=H_grid[day_inds,:,i]
             Std_grid_D[j-1,:,i]=np.nanstd(tmp_T[np.logical_not(tmp_P),:],axis=0)
             Std_grid_W[j-1,:,i]=np.nanstd(tmp_T[np.logical_and(tmp_P,tmp_P),:],axis=0)
+                        
     F_Mean_Grid,F_Std_Grid=Fourier_Hour_Solve(grid,Std_grid,new_day_vector)
     F_Mean_wet,F_Std_wet,F_Mean_dry,F_Std_dry=Fourier_Day_Solve(H_grid,P_grid,
                                             Std_grid_D,Std_grid_W,P_day_vector)
@@ -1059,11 +1180,52 @@ def Fourier_Generation(Directory,Var):
     ds.to_netcdf(Full_Savename)
     return
 
+def XY_Mon(in_grid,in_month,in_Station_max,in_var_len):
+    import numpy as np
+    '''Parallelised XY Matrix calculation'''
+    tmp_grid2=in_grid[:,1:]
+    tmp_grid3=in_grid[:,:-1]
+    print('Month #'+str(in_month))
+    C0_Matrix=np.zeros([in_Station_max*in_var_len,in_Station_max*in_var_len])
+    for i in range(0,in_Station_max*in_var_len):
+        for j in range(0,in_Station_max*in_var_len):
+            if i==j:
+                C0_Matrix[i,j]=1
+            elif j>i:
+                C0_Matrix[i,j]=np.corrcoef(in_grid[i,:],in_grid[j,:])[0,1]
+            else:
+                C0_Matrix[i,j]=C0_Matrix[j,i]
+    C1_Matrix=np.zeros([in_Station_max*in_var_len,in_Station_max*in_var_len])
+    for i in range(0,in_Station_max*in_var_len):
+        for j in range(0,in_Station_max*in_var_len):
+            C1_Matrix[j,i]=np.corrcoef(tmp_grid2[i,:],tmp_grid3[j,:])[0,1]
+    #Now we need to calculate X and Y vectors
+    C0_inv=np.linalg.inv(C0_Matrix)
+    X=np.matmul(C1_Matrix,C0_inv)
+    G=C0_Matrix-np.matmul(X,np.matrix.transpose(C1_Matrix))
+    flag=True
+    count=0
+    while flag:
+        if count==5:
+            flag=False
+            print('failed to solve for XY')
+        try:
+            Y=np.linalg.cholesky(G)
+            flag=False
+            print('Successful Cholesky Decomposition')
+        except:
+            G=Alt_Pos_Def(G)
+            count+=1
+            print('Matrix altered after failing Cholesky Decomposition')
+    return in_month,X,Y
+    
+    
 def XY_Hourly(Directory,variable_list):
     '''Generates the correlation matricies for the variables that are simulated hourly'''
     import xarray as xr
     import numpy as np
     import os
+    import multiprocessing
     start_year='1950'
     end_year='2022'
     year_str=start_year+'_'+end_year
@@ -1087,44 +1249,26 @@ def XY_Hourly(Directory,variable_list):
         for z in range(0,var_len):
             Data_vector=res_data[variable_list[z]][:,:,j].flatten()
             Full_grid[j+z*Station_max,:]=Data_vector[:]
-    for imon in range(0,12):
-        tmp_grid=Full_grid[:,monvec==imon]
-        tmp_grid2=tmp_grid[:,1:]
-        tmp_grid3=tmp_grid[:,:-1]
-        print('Month #'+str(imon))
-        C0_Matrix=np.zeros([Station_max*var_len,Station_max*var_len])
-        for i in range(0,Station_max*var_len):
-            for j in range(0,Station_max*var_len):
-                if i==j:
-                    C0_Matrix[i,j]=1
-                elif j>i:
-                    C0_Matrix[i,j]=np.corrcoef(tmp_grid[i,:],tmp_grid[j,:])[0,1]
-                else:
-                    C0_Matrix[i,j]=C0_Matrix[j,i]
-        C1_Matrix=np.zeros([Station_max*var_len,Station_max*var_len])
-        for i in range(0,Station_max*var_len):
-            for j in range(0,Station_max*var_len):
-                C1_Matrix[j,i]=np.corrcoef(tmp_grid2[i,:],tmp_grid3[j,:])[0,1]
-        #Now we need to calculate X and Y vectors
-        C0_inv=np.linalg.inv(C0_Matrix)
-        X=np.matmul(C1_Matrix,C0_inv)
-        G=C0_Matrix-np.matmul(X,np.matrix.transpose(C1_Matrix))
-        flag=True
-        count=0
-        while flag:
-            if count==5:
-                flag=False
-                print('failed to solve for XY')
-            try:
-                Y=np.linalg.cholesky(G)
-                flag=False
-                print('Successful Cholesky Decomposition')
-            except:
-                G=Alt_Pos_Def(G)
-                count+=1
-                print('Matrix altered after failing Cholesky Decomposition')
-        X_matrix[imon,:,:]=X
-        Y_matrix[imon,:,:]=Y
+    ##### Multithreading Code
+    p=[]
+    for imonth in range(0,12):
+        tmp_grid=Full_grid[:,monvec==imonth]
+
+        p.append((tmp_grid,imonth,Station_max,var_len))
+    if multiprocessing.cpu_count()>=12:
+        with multiprocessing.Pool(processes=12) as pool:
+            r = pool.starmap(XY_Mon,p)  # Parallel execution
+    elif multiprocessing.cpu_count()>=4:
+        with multiprocessing.Pool(processes=4) as pool:
+            r = pool.starmap(XY_Mon,p)  # Parallel execution
+    else:
+        with multiprocessing.Pool(processes=1) as pool:
+            r = pool.starmap(XY_Mon,p)  # Parallel execution
+    #####
+    for iv in range(0,len(r)):
+        index=r[iv][0]
+        X_matrix[index,:,:]=r[iv][1]
+        Y_matrix[index,:,:]=r[iv][2]
     ds = xr.Dataset(
         data_vars=dict(X_matrix=(["month","Arb_dimm","Arb_dimm_2"], X_matrix)),
         coords=dict(month=range(0,12),Arb_dimm=list(range(0,Station_max*var_len)),
