@@ -251,95 +251,93 @@ def Model_run(Directory,Sim_num,Simulation_start_year,Simulation_end_year,
     Model_Params={'TP':P_data,'Var_data':in_data,'Var_list':variable_list,
                   'H_XY':H_XY,'S_len':S_len}
     #Initialization
-    print('Initailizing the Simulation')
     Init_data=Simulation_Init(Model_Params,Spin_up_days)
     Sim_Start_day=np.datetime64(str(Simulation_start_year)+'-01-01')
     Sim_End_day=np.datetime64(str(Simulation_end_year)+'-01-01')
     Altitude_file=L_Directory+'Altitude.nc'
     Alt=xr.open_dataset(Altitude_file)
     #Run through each simulation
-    for i in range(0,Sim_num):
-        print('Starting Simulation Iteration #'+str(i+1)+' out of '+str(Sim_num))
-        sim_dir=S_Directory+'Simulation_'+str(i+1)+'/'
-        if not os.path.isdir(sim_dir):
-            os.mkdir(sim_dir)
-        Current_date=Sim_Start_day.astype('datetime64[D]')
-        #Generate list of days to be simulated
-        Current_Vectors=Init_data
-        start_flag=True
-        var_exist_flag=False
-        #Need Save each decade out seperately
-        while Current_date!=Sim_End_day:
-            year=Current_date.astype('datetime64[Y]').astype(int)
-            day=Current_date-Current_date.astype('datetime64[Y]') +1
-            if np.mod(year,10)==0 and day==1:
-                if start_flag:
-                    start_flag=False
-                    start_str=str(Simulation_start_year)
-                    start_day=Current_date.astype('datetime64[D]').astype(int)
-                    end_day=(Current_date.astype('datetime64[Y]')+10).astype(
-                        'datetime64[D]').astype(int)
-                    F_end_day=(Sim_End_day.astype('datetime64[Y]')).astype(
-                        'datetime64[D]').astype(int)
-                    if F_end_day<end_day:
-                        end_day=F_end_day
-                    day_len=end_day-start_day
-                else:
-                    #Save data
-                    end_str=str(year+1970)
-                    filename=sim_dir+'Simulation_'+start_str+'_'+end_str+'.nc'
-                    Full_data['Lat']=Model_Params['TP']['latitude'].values
-                    Full_data['Lon']=Model_Params['TP']['longitude'].values
-                    Full_data['Station_Mask']=Model_Params['TP']['Station_Mask'].values
-                    Full_data['Altitude']=Alt['altitude'].values
-                    RH=D2M_2_RH(Full_data)
-                    Full_data['RH']=RH
-                    Save_decade(Full_data,filename)
-                    var_exist_flag=False
-                    start_str=end_str
-                    start_day=Current_date.astype('datetime64[D]').astype(int)
-                    end_day=(Current_date.astype('datetime64[Y]')+10).astype(
-                        'datetime64[D]').astype(int)
-                    F_end_day=(Sim_End_day.astype('datetime64[Y]')).astype(
-                        'datetime64[D]').astype(int)
-                    if F_end_day<end_day:
-                        end_day=F_end_day
-                    day_len=end_day-start_day
-            #Simulate each day
-            Output_data,Current_Vectors=Full_Simulate_Day(Model_Params,Current_date,Current_Vectors)
-            if not var_exist_flag:
-                Full_data={}
-                Full_data['tp_o']=np.zeros([day_len,S_len])
-                Full_data['tp_a']=np.zeros([day_len,S_len])
-                Full_data['t2m']=np.zeros([S_len,24,day_len])
-                Full_data['d2m']=np.zeros([S_len,24,day_len])
-                Full_data['Date']=np.zeros([day_len])
-                var_exist_flag=True
-                Full_data['tp_o'][0,:]=Output_data['tp_o']
-                Full_data['tp_a'][0,:]=Output_data['tp_a']
-                Full_data['t2m'][:,:,0]=Output_data['t2m']
-                Full_data['d2m'][:,:,0]=Output_data['d2m']
-                Full_data['Date'][0]=np.array(Current_date)
-                count=0
+    print('Starting Simulation Iteration #'+str(Sim_num+1))
+    sim_dir=S_Directory+'Simulation_'+str(Sim_num+1)+'/'
+    if not os.path.isdir(sim_dir):
+        os.mkdir(sim_dir)
+    Current_date=Sim_Start_day.astype('datetime64[D]')
+    #Generate list of days to be simulated
+    Current_Vectors=Init_data
+    start_flag=True
+    var_exist_flag=False
+    #Need Save each decade out seperately
+    while Current_date!=Sim_End_day:
+        year=Current_date.astype('datetime64[Y]').astype(int)
+        day=Current_date-Current_date.astype('datetime64[Y]') +1
+        if np.mod(year,10)==0 and day==1:
+            if start_flag:
+                start_flag=False
+                start_str=str(Simulation_start_year)
+                start_day=Current_date.astype('datetime64[D]').astype(int)
+                end_day=(Current_date.astype('datetime64[Y]')+10).astype(
+                    'datetime64[D]').astype(int)
+                F_end_day=(Sim_End_day.astype('datetime64[Y]')).astype(
+                    'datetime64[D]').astype(int)
+                if F_end_day<end_day:
+                    end_day=F_end_day
+                day_len=end_day-start_day
             else:
-                count+=1
-                Full_data['tp_o'][count,:]=Output_data['tp_o']
-                Full_data['tp_a'][count,:]=Output_data['tp_a']
-                Full_data['t2m'][:,:,count]=Output_data['t2m']
-                Full_data['d2m'][:,:,count]=Output_data['d2m']
-                Full_data['Date'][count]=np.array(Current_date)
-            Current_date=Current_date+np.timedelta64(1, 'D')
-            print(Current_date)
-        if var_exist_flag:
-            end_str=Current_date.astype('datetime64[Y]').astype(str)
-            filename=sim_dir+'Simulation_'+start_str+'_'+end_str+'.nc'
-            Full_data['Lat']=Model_Params['TP']['latitude'].values
-            Full_data['Lon']=Model_Params['TP']['longitude'].values
-            Full_data['Station_Mask']=Model_Params['TP']['Station_Mask'].values
-            Full_data['Altitude']=Alt['altitude'].values
-            RH=D2M_2_RH(Full_data)
-            Full_data['RH']=RH
-            Save_decade(Full_data,filename)
+                #Save data
+                end_str=str(year+1970)
+                filename=sim_dir+'Simulation_'+start_str+'_'+end_str+'.nc'
+                Full_data['Lat']=Model_Params['TP']['latitude'].values
+                Full_data['Lon']=Model_Params['TP']['longitude'].values
+                Full_data['Station_Mask']=Model_Params['TP']['Station_Mask'].values
+                Full_data['Altitude']=Alt['altitude'].values
+                RH=D2M_2_RH(Full_data)
+                Full_data['RH']=RH
+                print('Saving Sim#'+str(Sim_num+1)+ ' years '+start_str+' to '+end_str)
+                Save_decade(Full_data,filename)
+                var_exist_flag=False
+                start_str=end_str
+                start_day=Current_date.astype('datetime64[D]').astype(int)
+                end_day=(Current_date.astype('datetime64[Y]')+10).astype(
+                    'datetime64[D]').astype(int)
+                F_end_day=(Sim_End_day.astype('datetime64[Y]')).astype(
+                    'datetime64[D]').astype(int)
+                if F_end_day<end_day:
+                    end_day=F_end_day
+                day_len=end_day-start_day
+        #Simulate each day
+        Output_data,Current_Vectors=Full_Simulate_Day(Model_Params,Current_date,Current_Vectors)
+        if not var_exist_flag:
+            Full_data={}
+            Full_data['tp_o']=np.zeros([day_len,S_len])
+            Full_data['tp_a']=np.zeros([day_len,S_len])
+            Full_data['t2m']=np.zeros([S_len,24,day_len])
+            Full_data['d2m']=np.zeros([S_len,24,day_len])
+            Full_data['Date']=np.zeros([day_len])
+            var_exist_flag=True
+            Full_data['tp_o'][0,:]=Output_data['tp_o']
+            Full_data['tp_a'][0,:]=Output_data['tp_a']
+            Full_data['t2m'][:,:,0]=Output_data['t2m']
+            Full_data['d2m'][:,:,0]=Output_data['d2m']
+            Full_data['Date'][0]=np.array(Current_date)
+            count=0
+        else:
+            count+=1
+            Full_data['tp_o'][count,:]=Output_data['tp_o']
+            Full_data['tp_a'][count,:]=Output_data['tp_a']
+            Full_data['t2m'][:,:,count]=Output_data['t2m']
+            Full_data['d2m'][:,:,count]=Output_data['d2m']
+            Full_data['Date'][count]=np.array(Current_date)
+        Current_date=Current_date+np.timedelta64(1, 'D')
+    if var_exist_flag:
+        end_str=Current_date.astype('datetime64[Y]').astype(str)
+        filename=sim_dir+'Simulation_'+start_str+'_'+end_str+'.nc'
+        Full_data['Lat']=Model_Params['TP']['latitude'].values
+        Full_data['Lon']=Model_Params['TP']['longitude'].values
+        Full_data['Station_Mask']=Model_Params['TP']['Station_Mask'].values
+        Full_data['Altitude']=Alt['altitude'].values
+        RH=D2M_2_RH(Full_data)
+        Full_data['RH']=RH
+        Save_decade(Full_data,filename)
     return
 
 def Sim_Loader(Sim_Dir):
@@ -411,7 +409,7 @@ def Precipitation_Adjust(Base_S_dir,observation_dir,Sim_num):
 
 def Temperature_Cycle_Adjust(Base_S_dir,observation_dir,Sim_num):
     '''Adjusts the diurnal cycle of temperature to match observations'''
-    O_filename=observation_dir+'t2m_1950_2022.nc'
+    O_filename=observation_dir+'Detrended_t2m_1950_2022.nc'
     Obs_t2m=xr.open_dataset(O_filename,decode_timedelta=False)
     Obs_full_data=Obs_t2m['t2m'].values
     Obs_time=Obs_t2m['time'].values
@@ -602,4 +600,56 @@ def add_alt_metadata(Base_S_dir,Sim_num):
             if os.path.isfile(Sim_Dir+'tmp_'+S_Filenames[z]):
                 os.remove(Sim_Dir+'tmp_'+S_Filenames[z])
             data.to_netcdf(Sim_Dir+'tmp_'+S_Filenames[z])
+    return
+
+def Nonstationairy_mode(Base_S_dir,observation_dir,Sim_num):
+    '''Reintroduces the model forcing associated with time evolution'''
+    def Line_based_correction(in_fit, in_data, in_d,dind_2020,maxd):
+        '''make adjustments to the data based on the trend line'''
+        in_d_index=in_d>maxd
+        in_d[in_d_index]=max_d
+        in_d_index=in_d<0
+        in_d[in_d_index]=0
+        line_vals = in_fit[0] + in_fit[1] * in_d
+        ind_vals = in_fit[0] + in_fit[1] * dind_2020
+        adjust_vals = ind_vals-line_vals
+        out_data = in_data - adjust_vals
+        return out_data
+    #Load in observational trending data
+    O_t2m_filename=observation_dir+'Detrended_t2m_1950_2022.nc'
+    Obs_t2m=xr.open_dataset(O_t2m_filename,decode_timedelta=False)
+    Obs_time=Obs_t2m['time'].values
+    t2m_co=Obs_t2m['Detrend Coefficients'].values
+    O_d2m_filename=observation_dir+'Detrended_d2m_1950_2022.nc'
+    Obs_d2m=xr.open_dataset(O_d2m_filename,decode_timedelta=False)
+    d2m_co=Obs_d2m['Detrend Coefficients'].values
+    ind_2020=np.argwhere(Obs_time==np.datetime64('2020-01-01'))[0][0]
+    #iterate through simulations
+    for i in range(0,Sim_num):
+        Sim_Dir=Base_S_dir+'Simulation/Simulation_'+str(i+1)+'/'
+        S_Filenames,S_Data=Sim_Loader(Sim_Dir)
+        for z in range(0,len(S_Filenames)):
+            data=S_Data[S_Filenames[z]]
+            #extract data
+            tmp_time=data['simulation_time'].values
+            tmp_t2m=data['simulation_t2m'].values
+            tmp_d2m=data['simulation_d2m'].values
+            d_values=tmp_time.astype('datetime64[D]').astype(int)-np.min(Obs_time.astype('datetime64[D]').astype(int))
+            max_d=np.max(Obs_time.astype('datetime64[D]').astype(int))-np.min(Obs_time.astype('datetime64[D]').astype(int))
+            new_t2m=np.ones(np.shape(tmp_t2m))*np.nan
+            new_d2m=np.ones(np.shape(tmp_t2m))*np.nan
+            for station in range(0,len(tmp_t2m[0,0,:])):
+                for hour in range(0,24):
+                    new_t2m[:,hour,station]=Line_based_correction(t2m_co, tmp_t2m[:,hour,station], d_values,ind_2020,max_d)
+                    new_d2m[:,hour,station]=Line_based_correction(d2m_co, tmp_d2m[:,hour,station], d_values,ind_2020,max_d)
+            tmp_data=data.copy(deep='True')
+            tmp_data['simulation_t2m'].values=new_t2m
+            tmp_data['simulation_d2m'].values=new_d2m
+              
+            f_t_name=Sim_Dir+'tmp_'+S_Filenames[z]            
+            if os.path.isfile(f_t_name):
+                os.remove(f_t_name)
+            tmp_data.to_netcdf(f_t_name)
+            tmp_data.close()
+            data.close()
     return

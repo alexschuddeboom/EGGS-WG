@@ -130,7 +130,7 @@ def Variable_Detrender(var,directory):
     init_data=xr.open_dataset(init_name,decode_timedelta=False)
     tmp_data=init_data[var_name].values
     time=init_data[time_name].values
-    d_values=time.astype('datetime64[D]').astype(int)+7305
+    d_values=time.astype('datetime64[D]').astype(int)-np.min(time.astype('datetime64[D]').astype(int))
     #Fit data
     regional_mean=np.nanmean(tmp_data,axis=t_axis)
     tmp_fit_coeff = detrend_curve_fit(regional_mean, d_values)
@@ -145,6 +145,8 @@ def Variable_Detrender(var,directory):
                 tmp_val[:,hour,lat,lon]=Line_based_correction(tmp_fit_coeff, tmp_data[:,hour,lat,lon], d_values,ind_2020)
     ds=init_data
     ds[var_name]=(('time', 'step', 'latitude', 'longitude'),tmp_val)
+    ds['Detrend Coefficients']=tmp_fit_coeff
+    ds['Detrend Pivot']=ind_2020
     #Output the data to disk
     Save_name=directory+'Detrended_'+var+'_1950_2022.nc'
     if os.path.isfile(Save_name):
@@ -213,6 +215,7 @@ def Markov_Calculation(Directory):
     for i in range(0,4):
         rain_counts[zero_count,i]=np.nan
         total_counts[zero_count,i]=np.nan
+    
     p0=(rain_counts[:,:,:,0]+rain_counts[:,:,:,2])/((total_counts[:,:,:,0]+total_counts[:,:,:,2]))
     p1=(rain_counts[:,:,:,1]+rain_counts[:,:,:,3])/((total_counts[:,:,:,1]+total_counts[:,:,:,3]))
     Markov_probabilities=rain_counts/total_counts
@@ -268,6 +271,17 @@ def Cross_Correlator(Directory):
     P0_vector=np.zeros([lat_len*lon_len-nan_count,mon_len])
     P1_vector=np.zeros([lat_len*lon_len-nan_count,mon_len])
     Station_mask=np.zeros([lat_len,lon_len])
+    
+    nan_ind=0
+    for i in range(0,lat_len):
+        for j in range(0,lon_len):
+            station_1_ind=i*lon_len+j-nan_ind
+            if not np.isnan(tp['tp'].values[0,i,j]):                    
+                Station_mask[i,j]=station_1_ind
+            else:
+                Station_mask[i,j]=np.nan
+                nan_ind+=1
+                
     for imon in range(0,mon_len):
         nan_ind=0
         P0_data=tp['Markov_probabilities'].sel(labels='p0',Months=imon+1).values
@@ -278,13 +292,16 @@ def Cross_Correlator(Directory):
                 if not np.isnan(tp['tp'].values[0,i,j]):
                     P0_vector[station_1_ind,imon]=P0_data[i,j]
                     P1_vector[station_1_ind,imon]=P1_data[i,j]
-                    Station_mask[i,j]=station_1_ind
                     tmp_vec=correlation_grid[i,j,:,:,imon]
                     relist=tmp_vec.flatten()
-                    correlation_matrix[station_1_ind,:,imon]=relist[
-                        np.logical_not(np.isnan(relist))]
+                    if np.sum(np.logical_not(np.isnan(relist)))!=int(np.nanmax(Station_mask)+1):
+                        relist[(np.isnan(relist))]=0
+                        correlation_matrix[station_1_ind,:,imon]=relist[
+                            np.logical_not(np.isnan(relist))]
+                    else:
+                        correlation_matrix[station_1_ind,:,imon]=relist[
+                            np.logical_not(np.isnan(relist))]
                 else:
-                    Station_mask[i,j]=np.nan
                     nan_ind+=1
     Station_len=int(np.nanmax(Station_mask))
     ds = xr.Dataset(
@@ -390,6 +407,18 @@ def Amounts_Coeff(Directory):
                     Alpha[i,j,i_mon]=results.x[0]
                     Beta_1[i,j,i_mon]=results.x[1]
                     Beta_2[i,j,i_mon]=results.x[2]
+    Beta_flip_ind=Beta_2>Beta_1
+    if Beta_flip_ind.any():
+        tmp_Beta_2=np.array(Beta_2)
+        tmp_Beta_1=np.array(Beta_1)
+        tmp_Alpha=np.array(Alpha)
+        tmp_Beta_2[Beta_flip_ind]=Beta_1[Beta_flip_ind]
+        tmp_Beta_1[Beta_flip_ind]=Beta_2[Beta_flip_ind]
+        tmp_Alpha[Beta_flip_ind]=1-Alpha[Beta_flip_ind]
+        Alpha=tmp_Alpha
+        Beta_1=tmp_Beta_1
+        Beta_2=tmp_Beta_2
+        
     tp['Months']=[1,2,3,4,5,6,7,8,9,10,11,12]
     tp['Alpha'] = (('latitude','longitude','Months'), Alpha)
     tp['Beta_1'] = (('latitude','longitude','Months'), Beta_1)
@@ -532,13 +561,18 @@ def Omega_Mon(P0,P1,C_X_Obs,C_R_0,imonth):
     Sim_Iterations=15
     learning_rate=[0.4,0.2,0.3,0.05]
     station_len=len(P0)
-    
-    Simulated_data=Simulation_Running_Function(C_R_0,Sim_len,station_len,P0,P1)
-    C_X_Sim_i=Correlate_Calculate(Simulated_data)
     try:
         np.linalg.cholesky(C_R_0)
     except:
-        C_R_0=Pos_Def(C_R_0)
+        C_R_0=np.real(Alt_Pos_Def(C_R_0))
+        C_R_0=np.round(C_R_0,8)
+        try:
+            np.linalg.cholesky(C_R_0)
+        except:
+            C_R_0=np.real(Alt_Pos_Def(C_R_0))
+    Simulated_data=Simulation_Running_Function(C_R_0,Sim_len,station_len,P0,P1)
+    C_X_Sim_i=Correlate_Calculate(Simulated_data)
+
     old_diff=1
     flag=True
     learningcount=0
@@ -592,17 +626,23 @@ def O_Omega(Directory):
 
     station_len=len(CORR['Station'])
     Full_C_R=np.zeros(np.shape(CORR['correlation_matrix'].values))
-    
     p=[]
     for imonth in range(0,12):
         P0_v=scistat.norm.ppf(CORR['P0_vector'].values[:,imonth],0,1)
         P1_v=scistat.norm.ppf(CORR['P1_vector'].values[:,imonth],0,1)
+        # if np.any(np.isinf(P0_v)):
+        #     P0_v[np.isinf(P0_v)]=np.sign(P0_v[np.isinf(P0_v)])*5
+        # if np.any(np.isinf(P1_v)):
+        #     P1_v[np.isinf(P1_v)]=np.sign(P1_v[np.isinf(P1_v)])*5
         C_X_Obs_v=CORR['correlation_matrix'].values[:,:,imonth]
         C_R_0_v=CORR['correlation_matrix'].values[:,:,imonth]
         p.append((P0_v,P1_v,C_X_Obs_v,C_R_0_v,imonth))
     ##### Multithreading Code
-    if multiprocessing.cpu_count()>=12:
+    if multiprocessing.cpu_count()>=24:
         with multiprocessing.Pool(processes=12) as pool:
+            r = pool.starmap(Omega_Mon,p)  # Parallel execution
+    elif multiprocessing.cpu_count()>=12:
+        with multiprocessing.Pool(processes=8) as pool:
             r = pool.starmap(Omega_Mon,p)  # Parallel execution
     elif multiprocessing.cpu_count()>=4:
         with multiprocessing.Pool(processes=4) as pool:
@@ -1304,11 +1344,11 @@ def orography_prep(L_Directory,S_Directory,LatBounds,LonBounds):
     t2m_lat=t2m['latitude'].values
     t2m_lon=t2m['longitude'].values
     
-    lat_1=np.greater_equal(lat,np.min(t2m_lat))
-    lat_2=np.less_equal(lat,np.max(t2m_lat))
+    lat_1=np.greater_equal(lat,np.round(np.min(t2m_lat),1))
+    lat_2=np.less_equal(lat,np.round(np.max(t2m_lat),1))
     lats=np.logical_and(lat_1,lat_2)
-    lon_1=np.greater_equal(lon,np.min(t2m_lon))
-    lon_2=np.less_equal(lon,np.max(t2m_lon))
+    lon_1=np.greater_equal(lon,np.round(np.min(t2m_lon),1))
+    lon_2=np.less_equal(lon,np.round(np.max(t2m_lon),1))
     lons=np.logical_and(lon_1,lon_2)
     
     if len(t2m['latitude'].values)!=np.sum(lats):

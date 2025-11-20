@@ -5,9 +5,6 @@ import os
 import DependencyCheck as DC
 import shutil
 import multiprocessing
-os.environ["MKL_NUM_THREADS"] = "1" 
-os.environ["NUMEXPR_NUM_THREADS"] = "1" 
-os.environ["OMP_NUM_THREADS"] = "1" 
 
 
 if __name__ == '__main__': 
@@ -144,12 +141,32 @@ if __name__ == '__main__':
     ###########################################################################
     # Run the model
     import SWG_Model as SWG_M
-    SWG_M.Model_run(Full_dir,
-                    Params['Number of Simulations'], Params['Simulation Start Year'],
-                    Params['Simulation End Year'], test_list)
+    p=[]
+    for isim in range(0,Params['Number of Simulations']):
+        p.append((Full_dir,isim, Params['Simulation Start Year'],Params['Simulation End Year'],test_list))
+    
+    if len(p)==1:
+        SWG_M.Model_run(p[0][0],p[0][1],p[0][2],p[0][3],p[0][4])
+    if multiprocessing.cpu_count()>=24:
+        with multiprocessing.Pool(processes=12) as pool:
+            r = pool.starmap(SWG_M.Model_run,p)  # Parallel execution
+    elif multiprocessing.cpu_count()>=12:
+        with multiprocessing.Pool(processes=6) as pool:
+            r = pool.starmap(SWG_M.Model_run,p)  # Parallel execution
+    elif multiprocessing.cpu_count()>=4:
+        with multiprocessing.Pool(processes=4) as pool:
+            r = pool.starmap(SWG_M.Model_run,p)  # Parallel execution
+    else:
+        with multiprocessing.Pool(processes=1) as pool:
+            r = pool.starmap(SWG_M.Model_run,p)  # Parallel execution
+
     if Params['Variable Adjust']:
         SWG_M.Precipitation_Adjust(Full_dir, Var_dir, Params['Number of Simulations'])
         SWG_M.Sim_replace(Full_dir, Params['Number of Simulations'])
         SWG_M.Temperature_Cycle_Adjust(Full_dir, Var_dir, Params['Number of Simulations'])
         SWG_M.Sim_replace(Full_dir, Params['Number of Simulations'])
+    if Params['Non-stationary Mode']:
+        SWG_M.Nonstationairy_mode(Full_dir, Var_dir, Params['Number of Simulations'])
+        SWG_M.Sim_replace(Full_dir, Params['Number of Simulations'])
+        
     SWG_M.metadata_handling(Full_dir, Params['Number of Simulations'])
