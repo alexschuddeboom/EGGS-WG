@@ -6,6 +6,9 @@ import DependencyCheck as DC
 import shutil
 import multiprocessing
 
+os.environ["MKL_NUM_THREADS"] = "1" 
+os.environ["NUMEXPR_NUM_THREADS"] = "1" 
+os.environ["OMP_NUM_THREADS"] = "1" 
 
 if __name__ == '__main__': 
     ARGS = len(sys.argv) - 1
@@ -147,7 +150,7 @@ if __name__ == '__main__':
     
     if len(p)==1:
         SWG_M.Model_run(p[0][0],p[0][1],p[0][2],p[0][3],p[0][4])
-    if multiprocessing.cpu_count()>=24:
+    elif multiprocessing.cpu_count()>=24:
         with multiprocessing.Pool(processes=12) as pool:
             r = pool.starmap(SWG_M.Model_run,p)  # Parallel execution
     elif multiprocessing.cpu_count()>=12:
